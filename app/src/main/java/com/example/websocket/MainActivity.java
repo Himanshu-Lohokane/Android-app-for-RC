@@ -23,7 +23,7 @@ public class MainActivity extends AppCompatActivity {
     private WebSocketClient webSocketClient;
     private TextView statusText, messageText;
     private EditText ipAddressEditText;
-    private Button connectButton, submitIpButton, buttonForward, buttonBackward;
+    private Button connectButton, submitIpButton, buttonForward, buttonBackward, buttonLeft, buttonRight;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private String serverIpAddress;
 
@@ -32,7 +32,8 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
 
         // Set the activity to full-screen mode
-        getWindow().setFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
+        getWindow().setFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
         // Hide the navigation and status bars
         getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_LAYOUT_STABLE
@@ -58,15 +59,17 @@ public class MainActivity extends AppCompatActivity {
         submitIpButton = findViewById(R.id.submitIpButton);
         buttonForward = findViewById(R.id.button_forward);
         buttonBackward = findViewById(R.id.button_backward);
+        buttonLeft = findViewById(R.id.button_left);
+        buttonRight = findViewById(R.id.button_right);
 
         // Set up button click listeners
         connectButton.setOnClickListener(v -> showIpAddressDialog());
 
-        // Note: We don't need the submitIpButton listener anymore with the dialog approach
-        // But we'll keep the button in the layout (hidden) in case you want to revert later
-
-        buttonForward.setOnTouchListener(buttonTouchListener);
-        buttonBackward.setOnTouchListener(buttonTouchListener);
+        // Set up touch listeners for control buttons
+        buttonForward.setOnTouchListener(motorTouchListener);
+        buttonBackward.setOnTouchListener(motorTouchListener);
+        buttonLeft.setOnTouchListener(servoTouchListener);
+        buttonRight.setOnTouchListener(servoTouchListener);
     }
 
     private void showIpAddressDialog() {
@@ -101,7 +104,7 @@ public class MainActivity extends AppCompatActivity {
         dialog.show();
     }
 
-    private View.OnTouchListener buttonTouchListener = new View.OnTouchListener() {
+    private final View.OnTouchListener motorTouchListener = new View.OnTouchListener() {
         @Override
         public boolean onTouch(View v, MotionEvent event) {
             switch (event.getAction()) {
@@ -129,6 +132,26 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
+    private final View.OnTouchListener servoTouchListener = new View.OnTouchListener() {
+        @Override
+        public boolean onTouch(View v, MotionEvent event) {
+            switch (event.getAction()) {
+                case MotionEvent.ACTION_DOWN:
+                    if (v.getId() == R.id.button_left) {
+                        sendServoCommand(5);    // Left position (5°)
+                    } else if (v.getId() == R.id.button_right) {
+                        sendServoCommand(180);  // Right position (180°)
+                    }
+                    return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    sendServoCommand(90);       // Center position (90°)
+                    return true;
+            }
+            return false;
+        }
+    };
+
     private void sendPinCommand(int pin, String state) {
         try {
             if (webSocketClient != null && webSocketClient.isOpen()) {
@@ -137,10 +160,40 @@ public class MainActivity extends AppCompatActivity {
                 command.put("state", state);
                 webSocketClient.send(command.toString());
                 mainHandler.post(() -> messageText.setText("Sent: " + command.toString()));
-                Log.d(TAG, "Sent command: " + command.toString());
+                Log.d(TAG, "Sent motor command: " + command.toString());
+            } else {
+                Log.e(TAG, "WebSocket not connected when trying to send motor command");
+                mainHandler.post(() -> messageText.setText("Error: Not connected"));
             }
         } catch (Exception e) {
-            Log.e(TAG, "Error sending pin command", e);
+            Log.e(TAG, "Error sending motor command", e);
+            mainHandler.post(() -> messageText.setText("Error: " + e.getMessage()));
+        }
+    }
+
+    private void sendServoCommand(int angle) {
+        try {
+            if (webSocketClient != null) {
+                if (webSocketClient.isOpen()) {
+                    JSONObject command = new JSONObject();
+                    command.put("servo", angle);
+                    String commandStr = command.toString();
+                    webSocketClient.send(commandStr);
+                    mainHandler.post(() -> {
+                        messageText.setText("Servo: " + angle + "°");
+                        Log.d(TAG, "Sent servo command: " + commandStr);
+                    });
+                } else {
+                    Log.e(TAG, "WebSocket not open when trying to send servo command");
+                    mainHandler.post(() -> messageText.setText("Error: Not connected"));
+                }
+            } else {
+                Log.e(TAG, "WebSocket client null when trying to send servo command");
+                mainHandler.post(() -> messageText.setText("Error: No connection"));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error sending servo command", e);
+            mainHandler.post(() -> messageText.setText("Error: " + e.getMessage()));
         }
     }
 
@@ -196,8 +249,10 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         // Clean up WebSocket connection if it exists
-        if (webSocketClient != null && webSocketClient.isOpen()) {
-            webSocketClient.close();
+        if (webSocketClient != null) {
+            if (webSocketClient.isOpen()) {
+                webSocketClient.close();
+            }
         }
     }
 }
